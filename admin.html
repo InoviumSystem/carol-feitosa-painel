@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Painel Admin - Agendamentos</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getFirestore, collection, getDocs, updateDoc, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyB8y0ZhwHe1ZcJdSNpgqaRASsBHVLs0AMA",
+      authDomain: "inoviumsystem-351ee.firebaseapp.com",
+      projectId: "inoviumsystem-351ee",
+      storageBucket: "inoviumsystem-351ee.appspot.com",
+      messagingSenderId: "303348530",
+      appId: "1:303348530:web:19f7cd921c2c7554e8b52b",
+      measurementId: "G-9LQ3V59T9L"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    let pedidos = [];
+    let modoExclusao = false;
+    let filtroStatus = "todos";
+    let ordenacao = "data_desc";
+
+    async function enviarMensagemWhatsApp(dados, status) {
+      const nomeCompleto = `${dados.prenom} ${dados.nom}`;
+      const numeroWhatsApp = dados.tel.replace(/\D/g, '');
+      let mensagem = "";
+
+      if (status === "confirmado") {
+        mensagem = `Bonjour ${nomeCompleto},\nVotre rendez-vous pour ${dados.service} le ${dados.date} à ${dados.heure} a été *confirmé*. Merci !`;
+      } else if (status === "rejeitado") {
+        mensagem = `Bonjour ${nomeCompleto},\nMalheureusement, votre rendez-vous pour ${dados.service} le ${dados.date} à ${dados.heure} a été *rejeté*. Merci de choisir un autre horaire.`;
+      }
+
+      const url = `https://wa.me/${numeroWhatsApp}?text=${encodeURIComponent(mensagem)}`;
+      window.open(url, "_blank");
+    }
+
+    function ordenarPedidos(lista) {
+      return lista.sort((a, b) => {
+        const dataA = new Date(`${a.date}T${a.heure}`);
+        const dataB = new Date(`${b.date}T${b.heure}`);
+        if (ordenacao === "data_asc") return dataA - dataB;
+        if (ordenacao === "hora_asc") return a.heure.localeCompare(b.heure);
+        if (ordenacao === "hora_desc") return b.heure.localeCompare(a.heure);
+        // padrão data_desc
+        return dataB - dataA;
+      });
+    }
+
+    function filtrarPedidos(lista) {
+      if (filtroStatus === "todos") return lista;
+      return lista.filter(p => (p.status || "pendente") === filtroStatus);
+    }
+
+    async function carregarPedidos() {
+      const container = document.getElementById('pedidos');
+      container.innerHTML = 'Chargement...';
+      const querySnapshot = await getDocs(collection(db, "rendezvous"));
+      pedidos = querySnapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+
+      // Filtra e ordena
+      let listaFiltrada = filtrarPedidos(pedidos);
+      listaFiltrada = ordenarPedidos(listaFiltrada);
+
+      if (listaFiltrada.length === 0) {
+        container.innerHTML = `<p class="text-center text-gray-500 mt-8">Aucun rendez-vous trouvé.</p>`;
+        return;
+      }
+
+      container.innerHTML = "";
+      listaFiltrada.forEach(dados => {
+        const card = document.createElement('div');
+        card.className = 'card bg-white rounded-lg p-4 mb-4 shadow-md relative';
+        card.dataset.id = dados.id;
+
+        const statusAtual = dados.status || 'pendente';
+
+        card.innerHTML = `
+          <label class="flex items-center cursor-pointer mb-2">
+            <input type="checkbox" class="checkbox-excluir mr-3 scale-125" style="display:none" />
+            <strong class="text-lg">${dados.prenom} ${dados.nom}</strong>
+          </label>
+          <div class="mb-2">
+            <p><span class="font-semibold">Téléphone:</span> ${dados.tel}</p>
+            <p><span class="font-semibold">Service:</span> ${dados.service}</p>
+            <p><span class="font-semibold">Date:</span> ${dados.date} à ${dados.heure}</p>
+            <p><span class="font-semibold">Status:</span> <span class="capitalize">${statusAtual}</span></p>
+          </div>
+          <div class="flex space-x-3">
+            <button class="accept bg-green-600 text-white px-4 py-1 rounded hover:bg-green-700 transition disabled:opacity-50" ${statusAtual === "confirmado" || statusAtual === "rejeitado" ? "disabled" : ""}>Accepter</button>
+            <button class="reject bg-red-600 text-white px-4 py-1 rounded hover:bg-red-700 transition disabled:opacity-50" ${statusAtual === "confirmado" || statusAtual === "rejeitado" ? "disabled" : ""}>Rejeter</button>
+          </div>
+        `;
+
+        const acceptBtn = card.querySelector('.accept');
+        const rejectBtn = card.querySelector('.reject');
+        const checkbox = card.querySelector('.checkbox-excluir');
+
+        acceptBtn.onclick = async () => {
+          await updateDoc(doc(db, "rendezvous", dados.id), {
+            status: "confirmado"
+          });
+          await enviarMensagemWhatsApp(dados, "confirmado");
+          await carregarPedidos();
+        };
+
+        rejectBtn.onclick = async () => {
+          await updateDoc(doc(db, "rendezvous", dados.id), {
+            status: "rejeitado"
+          });
+          await enviarMensagemWhatsApp(dados, "rejeitado");
+          await carregarPedidos();
+        };
+
+        if (modoExclusao) {
+          checkbox.style.display = "inline-block";
+        } else {
+          checkbox.style.display = "none";
+          checkbox.checked = false;
+        }
+
+        container.appendChild(card);
+      });
+    }
+
+    window.onload = () => {
+      carregarPedidos();
+
+      const btnExcluir = document.getElementById('btnExcluir');
+      const controles = document.getElementById('controles-exclusao');
+      const btnApagarSelecionados = document.getElementById('btnApagarSelecionados');
+      const btnApagarTudo = document.getElementById('btnApagarTudo');
+
+      const filtroSelect = document.getElementById('filtro-status');
+      const ordenacaoSelect = document.getElementById('ordenacao');
+
+      btnExcluir.onclick = () => {
+        modoExclusao = !modoExclusao;
+        controles.style.display = modoExclusao ? "flex" : "none";
+
+        document.querySelectorAll(".checkbox-excluir").forEach(cb => {
+          cb.style.display = modoExclusao ? "inline-block" : "none";
+          cb.checked = false;
+        });
+      };
+
+      btnApagarSelecionados.onclick = async () => {
+        const selecionados = Array.from(document.querySelectorAll(".checkbox-excluir:checked"));
+        if (selecionados.length === 0) {
+          alert("Aucune demande sélectionnée.");
+          return;
+        }
+
+        if (!confirm(`Confirmer la suppression de ${selecionados.length} demande(s) ?`)) return;
+
+        for (const cb of selecionados) {
+          const id = cb.closest('.card').dataset.id;
+          await deleteDoc(doc(db, "rendezvous", id));
+        }
+
+        alert("Demandes supprimées avec succès.");
+        modoExclusao = false;
+        controles.style.display = "none";
+        carregarPedidos();
+      };
+
+      btnApagarTudo.onclick = async () => {
+        if (!confirm("Confirmer la suppression de TOUTES les demandes ?")) return;
+
+        const querySnapshot = await getDocs(collection(db, "rendezvous"));
+        const promises = querySnapshot.docs.map(docSnap =>
+          deleteDoc(doc(db, "rendezvous", docSnap.id))
+        );
+
+        await Promise.all(promises);
+        alert("Toutes les demandes ont été supprimées.");
+        modoExclusao = false;
+        controles.style.display = "none";
+        carregarPedidos();
+      };
+
+      filtroSelect.onchange = () => {
+        filtroStatus = filtroSelect.value;
+        carregarPedidos();
+      };
+
+      ordenacaoSelect.onchange = () => {
+        ordenacao = ordenacaoSelect.value;
+        carregarPedidos();
+      };
+    };
+  </script>
+</head>
+<body class="bg-gray-50 min-h-screen p-6">
+  <h1 class="text-3xl font-bold mb-6 text-center text-rose-800">Demandes de massage</h1>
+
+  <div class="flex flex-wrap justify-center gap-4 mb-6">
+    <select id="filtro-status" class="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-rose-400">
+      <option value="todos">Tous les statuts</option>
+      <option value="pendente">Pendants</option>
+      <option value="confirmado">Confirmés</option>
+      <option value="rejeitado">Rejetés</option>
+    </select>
+
+    <select id="ordenacao" class="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-rose-400">
+      <option value="data_desc">Date (récent d'abord)</option>
+      <option value="data_asc">Date (plus ancien d'abord)</option>
+      <option value="hora_asc">Heure (croissant)</option>
+      <option value="hora_desc">Heure (décroissant)</option>
+    </select>
+
+    <button id="btnExcluir" class="bg-rose-600 text-white px-4 py-2 rounded hover:bg-rose-700 transition">🗑️ Exclure des demandes</button>
+  </div>
+
+  <div id="pedidos" class="max-w-4xl mx-auto"></div>
+
+  <div id="controles-exclusao" class="hidden justify-center gap-4 mt-6">
+    <button id="btnApagarSelecionados" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition">✅ Supprimer sélectionnées</button>
+    <button id="btnApagarTudo" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition">⚠️ Supprimer tout</button>
+  </div>
+</body>
+</html>
