@@ -39,7 +39,8 @@
       }
 
       const url = `https://wa.me/${numeroWhatsApp}?text=${encodeURIComponent(mensagem)}`;
-      window.open(url, "_blank");
+      //window.open(url, "_blank");
+      window.location.href = url;
     }
 
     function ordenarPedidos(lista) {
@@ -227,3 +228,4 @@
   </div>
 </body>
 </html>
+
